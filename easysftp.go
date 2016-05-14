@@ -99,8 +99,8 @@ func (c *Client) Lstat(path string) (os.FileInfo, error) {
 	return sftpClient.Lstat(path)
 }
 
-// Download a file from the given path to the output writer
-func (c *Client) Download(path string, output io.Writer) error {
+// Download a file from the given path to the output writer with the given offset of the remote file
+func (c *Client) Download(path string, output io.Writer, offset int64) error {
 	sftpClient, err := c.newSftpClient()
 	if err != nil {
 		return err
@@ -124,12 +124,18 @@ func (c *Client) Download(path string, output io.Writer) error {
 
 	defer remote.Close()
 
+	_, err = remote.Seek(offset, 0)
+	if err != nil {
+		return err
+	}
+
 	_, err = io.Copy(output, remote)
 	return err
 }
 
 // Mirror downloads an entire folder (recursively) or file underneath the given localParentPath
-func (c *Client) Mirror(path string, localParentPath string) error {
+// resume will continue downloading interrupted files
+func (c *Client) Mirror(path string, localParentPath string, resume bool) error {
 	sftpClient, err := c.newSftpClient()
 	if err != nil {
 		return err
@@ -154,9 +160,19 @@ func (c *Client) Mirror(path string, localParentPath string) error {
 			}
 		}
 
+		flags := os.O_RDWR | os.O_CREATE
+
+		if resume {
+			// append to the end of the file
+			flags |= os.O_APPEND
+		} else {
+			// truncate the file
+			flags |= os.O_TRUNC
+		}
+
 		file, err := os.OpenFile(
 			localPath,
-			os.O_RDWR|os.O_CREATE|os.O_TRUNC,
+			flags,
 			c.config.FileMode,
 		)
 		if err != nil {
@@ -165,7 +181,18 @@ func (c *Client) Mirror(path string, localParentPath string) error {
 
 		defer file.Close()
 
-		return c.Download(path, file)
+		var offset int64
+		if resume {
+			info, err := file.Stat()
+			if err != nil {
+				return err
+			}
+
+			// we assume that the size of the file is the resume point
+			offset = info.Size()
+		}
+
+		return c.Download(path, file, offset)
 	}
 
 	// download the whole directory recursively
