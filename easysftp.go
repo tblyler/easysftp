@@ -247,10 +247,30 @@ func (c *Client) Mirror(path string, localParentPath string, resume bool) error 
 			return err
 		}
 
-		localFile, err := os.OpenFile(localPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, c.config.FileMode)
+		flags := os.O_RDWR | os.O_CREATE
+
+		if resume {
+			flags |= os.O_APPEND
+		} else {
+			flags |= os.O_TRUNC
+		}
+
+		localFile, err := os.OpenFile(localPath, flags, c.config.FileMode)
 		if err != nil {
 			remoteFile.Close()
 			return err
+		}
+
+		if resume {
+			info, err := localFile.Stat()
+			if err != nil {
+				return err
+			}
+
+			_, err = remoteFile.Seek(info.Size(), 0)
+			if err != nil {
+				return err
+			}
 		}
 
 		_, err = io.Copy(localFile, remoteFile)
