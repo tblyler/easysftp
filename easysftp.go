@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// resumeBufferSize is the size of writes when downloading via sftp (32KiB) * 2
+const resumeBufferSize = 1 << 16
+
 // ClientConfig maintains all of the configuration info to connect to a SSH host
 type ClientConfig struct {
 	Username string
@@ -134,7 +137,7 @@ func (c *Client) Download(path string, output io.Writer, offset int64) error {
 }
 
 // Mirror downloads an entire folder (recursively) or file underneath the given localParentPath
-// resume will continue downloading interrupted files
+// resume will try to continue downloading interrupted files
 func (c *Client) Mirror(path string, localParentPath string, resume bool) error {
 	sftpClient, err := c.newSftpClient()
 	if err != nil {
@@ -162,10 +165,7 @@ func (c *Client) Mirror(path string, localParentPath string, resume bool) error 
 
 		flags := os.O_RDWR | os.O_CREATE
 
-		if resume {
-			// append to the end of the file
-			flags |= os.O_APPEND
-		} else {
+		if !resume {
 			// truncate the file
 			flags |= os.O_TRUNC
 		}
@@ -188,8 +188,34 @@ func (c *Client) Mirror(path string, localParentPath string, resume bool) error 
 				return err
 			}
 
-			// we assume that the size of the file is the resume point
-			offset = info.Size()
+			offset = info.Size() - resumeBufferSize
+			if offset <= 0 {
+				offset = 0
+			} else {
+				_, err = file.Seek(offset, 0)
+				if err != nil {
+					return err
+				}
+
+				buf := make([]byte, resumeBufferSize)
+				_, err = file.Read(buf)
+				if err != nil {
+					return err
+				}
+
+				for _, val := range buf {
+					if val == 0 {
+						break
+					}
+
+					offset++
+				}
+
+				_, err = file.Seek(offset, 0)
+				if err != nil {
+					return err
+				}
+			}
 		}
 
 		return c.Download(path, file, offset)
@@ -249,9 +275,7 @@ func (c *Client) Mirror(path string, localParentPath string, resume bool) error 
 
 		flags := os.O_RDWR | os.O_CREATE
 
-		if resume {
-			flags |= os.O_APPEND
-		} else {
+		if !resume {
 			flags |= os.O_TRUNC
 		}
 
@@ -267,7 +291,36 @@ func (c *Client) Mirror(path string, localParentPath string, resume bool) error 
 				return err
 			}
 
-			_, err = remoteFile.Seek(info.Size(), 0)
+			offset := info.Size() - resumeBufferSize
+			if offset <= 0 {
+				offset = 0
+			} else {
+				_, err = localFile.Seek(offset, 0)
+				if err != nil {
+					return err
+				}
+
+				buf := make([]byte, resumeBufferSize)
+				_, err = localFile.Read(buf)
+				if err != nil {
+					return err
+				}
+
+				for _, val := range buf {
+					if val == 0 {
+						break
+					}
+
+					offset++
+				}
+
+				_, err = localFile.Seek(offset, 0)
+				if err != nil {
+					return err
+				}
+			}
+
+			_, err = remoteFile.Seek(offset, 0)
 			if err != nil {
 				return err
 			}
