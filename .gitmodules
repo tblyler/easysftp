@@ -1,0 +1,6 @@
+[submodule "vendor/github.com/kr/fs"]
+	path = vendor/github.com/kr/fs
+	url = git://github.com/kr/fs
+[submodule "vendor/github.com/pkg/sftp"]
+	path = vendor/github.com/pkg/sftp
+	url = git://github.com/pkg/sftp
